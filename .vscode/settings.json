@@ -1,0 +1,20 @@
+{
+    "sqltools.connections": [
+        {
+            "pgOptions": {
+                "ssl": {
+                    "rejectUnauthorized": false
+                }
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "bedrock-eval-db.conk2ese0jy8.us-east-1.rds.amazonaws.com",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "name": "RDS_Bedrock_SQLTools",
+            "database": "bedrock_eval",
+            "username": "postgres",
+            "password": "cJC6q34AuffGF5"
+        }
+    ]
+}

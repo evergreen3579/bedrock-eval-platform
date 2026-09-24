@@ -1,0 +1,170 @@
+/* 글로벌 색상 및 테마 변수 설정 */
+:root {
+  --bg-main: #0d1117;
+  --bg-card: #161b22;
+  --text-main: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent: #238636;
+  --accent-hover: #2ea043;
+  --border: #30363d;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.app-container {
+  max-width: 1200px; /* 여러 카드를 담기 위해 너비 확장 */
+  margin: 0 auto;
+  padding: 3rem 2rem;
+}
+
+.header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.header h1 {
+  font-size: 1.8rem;
+  margin: 0;
+  color: #ffffff;
+}
+
+.header p {
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.input-group {
+  margin-bottom: 1.5rem;
+}
+
+.input-group label.group-label {
+  display: block;
+  margin-bottom: 0.8rem;
+  font-weight: bold;
+  color: var(--text-main);
+}
+
+/* 체크박스 그룹 스타일 */
+.checkbox-group {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 1rem;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 1.1rem;
+  height: 1.1rem;
+  cursor: pointer;
+}
+
+.form-control {
+  width: 100%;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.85rem;
+  font-family: inherit;
+  box-sizing: border-box;
+  font-size: 0.95rem;
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.submit-btn {
+  background-color: var(--accent);
+  color: #ffffff;
+  border: 1px solid rgba(240, 246, 252, 0.1);
+  padding: 0.85rem 2rem;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 결과 출력 그리드 스타일 */
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+  margin-top: 3rem;
+}
+
+.result-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+}
+
+.result-card h3 {
+  margin-top: 0;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.8rem;
+  margin-bottom: 1.2rem;
+  font-size: 1.2rem;
+}
+
+.result-item {
+  margin-bottom: 0.8rem;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.result-label {
+  color: var(--text-muted);
+  display: inline-block;
+  width: 90px;
+}
+
+.result-response {
+  flex-grow: 1;
+  background-color: var(--bg-main);
+  padding: 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  margin-top: 0.5rem;
+  overflow-y: auto;
+  max-height: 200px;
+  line-height: 1.5;
+}
