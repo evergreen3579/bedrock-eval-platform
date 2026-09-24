@@ -40,7 +40,7 @@ function App() {
 
     try {
       // 변경된 백엔드 스키마에 맞게 배열(models)로 전송
-      const response = await axios.post('http://127.0.0.1:8000/mock-bedrock-eval/', {
+      const response = await axios.post('http://54.227.82.12:8000/mock-bedrock-eval/', {
         models: selectedModels,
         prompt: prompt
       });
