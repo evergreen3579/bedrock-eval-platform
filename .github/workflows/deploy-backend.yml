@@ -1,25 +1,29 @@
-name: Deploy Backend to EC2
+name: Deploy Backend to EC2 via SSM
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths:
       - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: EC2 SSH 접속 및 자동 배포 실행
-        uses: appleboy/ssh-action@v1.0.3
+      - name: 1. AWS 자격 증명 구성
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd ~/bedrock-eval-platform/backend
-            git pull origin main
-            source venv/bin/activate
-            pip install -r requirements.txt
-            sudo systemctl restart fastapi
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: 2. AWS SSM을 통한 백엔드 배포 스크립트 실행
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy Backend via GitHub Actions (Port-less)" \
+            --parameters 'commands=["sudo -u ubuntu bash -c \"cd /home/ubuntu/bedrock-eval-platform/backend && git pull origin main && source venv/bin/activate && pip install -r requirements.txt\"", "sudo systemctl restart fastapi"]'
