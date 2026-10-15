@@ -1,0 +1,47 @@
+name: Deploy Frontend to S3 & CloudFront
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: 1. 저장소 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 2. Node.js 환경 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 3. 패키지 설치 및 프로덕션 빌드
+        env:
+          VITE_API_BASE_URL: https://api.evergreen3579.cloud
+        run: |
+          npm ci
+          npm run build
+
+      - name: 4. AWS 자격 증명 구성
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: 5. S3 버킷에 빌드 파일 동기화
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
+
+      - name: 6. CloudFront 캐시 무효화 (Invalidation)
+        run: |
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"

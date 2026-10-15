@@ -1,0 +1,25 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: EC2 SSH 접속 및 자동 배포 실행
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/bedrock-eval-platform/backend
+            git pull origin main
+            source venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart fastapi

@@ -168,3 +168,19 @@ body {
   max-height: 200px;
   line-height: 1.5;
 }
+
+/* [Phase 3 추가] 스켈레톤 로딩 애니메이션 */
+.skeleton-box {
+  overflow: hidden;
+  position: relative;
+}
+
+.skeleton-pulse {
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.7; }
+  50% { opacity: 0.3; }
+  100% { opacity: 0.7; }
+}
