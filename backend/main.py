@@ -153,7 +153,8 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.7,
-                "maxOutputTokens": 700,
+                "maxOutputTokens": 500,
+                **({"thinkingConfig": {"thinkingBudget": 0}} if "2.5" in model_id else {})
             }
         }
         res = await client.post(url, headers=headers, json=payload, timeout=25.0)
@@ -208,7 +209,7 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
         routing_map = {
             "Gemini-2.5-Flash": (
                 "gemini",
-                pick_candidates(gemini_avail, ["2.5-flash", "flash-latest", "2.0-flash", "flash"])
+                pick_candidates(gemini_avail, ["2.0-flash", "2.5-flash", "flash-latest", "flash"])
             ),
             "Groq-Llama-3.1-8B": (
                 "groq",
