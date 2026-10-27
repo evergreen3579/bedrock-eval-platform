@@ -5,7 +5,11 @@ import axios from 'axios';
 function Dashboard() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState('');
-  const [selectedModels, setSelectedModels] = useState(['Claude-3-Sonnet', 'Claude-3-Haiku', 'Llama-3']);
+  const [selectedModels, setSelectedModels] = useState([
+    'Gemini-2.5-Flash',
+    'Groq-Llama-3.1-8B',
+    'Groq-Llama-3.3-70B'
+  ]);
   const [results, setResults] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   
@@ -19,10 +23,11 @@ function Dashboard() {
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.evergreen3579.cloud';
 
+  // 요청하신 3개 모델 순서 및 이름 반영
   const availableModels = [
-    { id: 'Claude-3-Sonnet', label: 'Anthropic : Claude 3 Sonnet' },
-    { id: 'Claude-3-Haiku', label: 'Anthropic : Claude 3 Haiku' },
-    { id: 'Llama-3', label: 'Meta : Llama 3' }
+    { id: 'Gemini-2.5-Flash', label: 'Google - Gemini 2.5 Flash' },
+    { id: 'Groq-Llama-3.1-8B', label: 'Groq - Llama 3.1 8B Instant' },
+    { id: 'Groq-Llama-3.3-70B', label: 'Groq - Llama 3.3 70B Versatile' }
   ];
 
   const handleModelToggle = (modelId) => {
@@ -119,7 +124,7 @@ function Dashboard() {
           ← 홈으로
         </button>
         <h1 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', lineHeight: '1.3' }}>Multi-LLM Evaluation Console</h1>
-        <p style={{ color: '#8b949e', margin: 0 }}>Amazon Bedrock API 기반 대형언어모델 응답 비교 및 성능 측정</p>
+        <p style={{ color: '#8b949e', margin: 0 }}>Google Gemini & Groq LPU 기반 다중 모델 실시간 응답 및 성능 비교</p>
       </header>
       
       {errorMsg && (
@@ -186,7 +191,6 @@ function Dashboard() {
               {isLoading ? 'Executing Parallel Evaluation...' : isCooldown ? '잠시 후 재시도 가능 (과금 방지 쿨다운 10초)...' : 'Run Evaluation'}
             </button>
 
-            {/* 로딩 중 스켈레톤 UI */}
             {isLoading ? (
               <div className="results-grid" style={{ marginTop: '2rem' }}>
                 {selectedModels.map((modelId, index) => (
@@ -202,13 +206,12 @@ function Dashboard() {
                 {results.map((res, index) => (
                   <div key={index} className="result-card" style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #21262d', paddingBottom: '0.8rem', marginBottom: '1rem' }}>
-                      <h3 style={{ margin: 0, color: '#58a6ff', fontSize: '1.2rem' }}>{res.model_name}</h3>
+                      <h3 style={{ margin: 0, color: '#58a6ff', fontSize: '1.15rem' }}>{res.model_name}</h3>
                       <span style={{ fontSize: '0.8rem', color: '#8b949e', background: '#161b22', padding: '0.2rem 0.6rem', borderRadius: '4px', border: '1px solid #30363d' }}>
                         Task #{res.id}
                       </span>
                     </div>
 
-                    {/* Score 제거 후 Latency와 Tokens만 깔끔한 배지로 표시 */}
                     <div style={{ display: 'flex', gap: '0.8rem', marginBottom: '1rem' }}>
                       <div style={{ flex: 1, background: '#161b22', padding: '0.6rem', borderRadius: '6px', border: '1px solid #21262d', textAlign: 'center' }}>
                         <div style={{ fontSize: '0.75rem', color: '#8b949e', marginBottom: '0.2rem' }}>Latency</div>
@@ -220,7 +223,6 @@ function Dashboard() {
                       </div>
                     </div>
 
-                    {/* 프롬프트 출력값(Response) 원문 전체 표시 영역 */}
                     <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
                       <span style={{ fontSize: '0.85rem', color: '#8b949e', marginBottom: '0.5rem', fontWeight: 'bold' }}>
                         Model Output:
@@ -272,7 +274,6 @@ function Dashboard() {
                             <span style={{ fontSize: '0.75rem', color: '#8b949e' }}>#{evalData.id}</span>
                           </div>
                           
-                          {/* 히스토리 카드에서도 Score 제거 후 Latency와 Tokens만 표시 */}
                           <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', marginBottom: '0.8rem', background: '#0d1117', padding: '0.5rem 0.8rem', borderRadius: '4px' }}>
                             <div><span style={{ color: '#8b949e' }}>Latency: </span> <span style={{ color: '#d2a8ff', fontWeight: 'bold' }}>{evalData.processing_time_ms} ms</span></div>
                             <div><span style={{ color: '#8b949e' }}>Tokens: </span> <span style={{ color: '#79c0ff', fontWeight: 'bold' }}>{evalData.token_count}</span></div>
