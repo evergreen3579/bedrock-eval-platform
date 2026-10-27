@@ -41,21 +41,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 확정된 3개 모델 라우팅 설정
-MODEL_ROUTING = {
-    "Gemini-2.5-Flash": {
-        "provider": "gemini",
-        "candidates": ["gemini-2.5-flash", "gemini-2.0-flash"],
-    },
-    "Groq-Llama-3.1-8B": {
-        "provider": "groq",
-        "candidates": ["llama-3.1-8b-instant", "llama3-8b-8192"],
-    },
-    "Groq-Llama-3.3-70B": {
-        "provider": "groq",
-        "candidates": ["llama-3.3-70b-versatile", "llama3-70b-8192"],
-    },
-}
+# API 서버에서 조회한 실제 사용 가능 모델 캐시
+CACHED_GEMINI_MODELS: List[str] = []
+CACHED_GROQ_MODELS: List[str] = []
+
+async def get_gemini_models(client: httpx.AsyncClient, api_key: str) -> List[str]:
+    global CACHED_GEMINI_MODELS
+    if CACHED_GEMINI_MODELS:
+        return CACHED_GEMINI_MODELS
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    try:
+        res = await client.get(url, headers={"x-goog-api-key": api_key}, timeout=10.0)
+        if res.status_code != 200:
+            res = await client.get(f"{url}?key={api_key}", timeout=10.0)
+        
+        if res.status_code == 200:
+            data = res.json()
+            valid = []
+            for m in data.get("models", []):
+                methods = m.get("supportedGenerationMethods", [])
+                name = m.get("name", "").replace("models/", "")
+                # 무료 티어에서 100% 작동하는 flash 계열 텍스트 모델만 수집
+                if (
+                    "generateContent" in methods
+                    and "gemini" in name
+                    and "flash" in name
+                    and not any(x in name for x in ["vision", "embedding", "tts", "image", "audio", "thinking"])
+                ):
+                    valid.append(name)
+            if valid:
+                CACHED_GEMINI_MODELS = valid
+                return valid
+    except Exception:
+        pass
+    return ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+async def get_groq_models(client: httpx.AsyncClient, api_key: str) -> List[str]:
+    global CACHED_GROQ_MODELS
+    if CACHED_GROQ_MODELS:
+        return CACHED_GROQ_MODELS
+
+    url = "https://api.groq.com/openai/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        res = await client.get(url, headers=headers, timeout=10.0)
+        if res.status_code == 200:
+            data = res.json()
+            valid = []
+            for m in data.get("data", []):
+                mid = m.get("id", "")
+                # 음성(whisper), 보안가드(guard), 비전(vision), 추론전용(deepseek) 등을 제외한 순수 채팅 LLM 필터링
+                if not any(x in mid.lower() for x in ["whisper", "guard", "vision", "tts", "playai", "embed", "allam"]):
+                    valid.append(mid)
+            if valid:
+                CACHED_GROQ_MODELS = valid
+                return valid
+    except Exception:
+        pass
+    return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+def pick_candidates(available: List[str], prefer_keywords: List[str]) -> List[str]:
+    picked = []
+    for kw in prefer_keywords:
+        for m in available:
+            if kw in m.lower() and m not in picked:
+                picked.append(m)
+    for m in available:
+        if m not in picked:
+            picked.append(m)
+    return picked[:5]
 
 def get_db():
     db = SessionLocal()
@@ -91,7 +146,7 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
 
     async def call_gemini(client: httpx.AsyncClient, model_id: str, prompt: str):
         if not gemini_key:
-            raise ValueError("서버 .env에 GEMINI_API_KEY가 설정되지 않았습니다.")
+            raise ValueError("GEMINI_API_KEY 미설정")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
         headers = {"Content-Type": "application/json", "x-goog-api-key": gemini_key}
         payload = {
@@ -99,13 +154,14 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
             "generationConfig": {
                 "temperature": 0.7,
                 "maxOutputTokens": 700,
-                # 내부 추론(Thinking)으로 인한 시간 지연을 방지하기 위해 budget 0 설정
-                **({"thinkingConfig": {"thinkingBudget": 0}} if "2.5" in model_id else {})
             }
         }
         res = await client.post(url, headers=headers, json=payload, timeout=25.0)
         if res.status_code != 200:
-            raise RuntimeError(f"{model_id} (HTTP {res.status_code})")
+            # URL 쿼리 파라미터 인증 폴백
+            res = await client.post(f"{url}?key={gemini_key}", json=payload, timeout=25.0)
+        if res.status_code != 200:
+            raise RuntimeError(f"{model_id}({res.status_code})")
         
         data = res.json()
         text_out = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -117,7 +173,7 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
 
     async def call_groq(client: httpx.AsyncClient, model_id: str, prompt: str):
         if not groq_key:
-            raise ValueError("서버 .env에 GROQ_API_KEY가 설정되지 않았습니다.")
+            raise ValueError("GROQ_API_KEY 미설정")
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -134,7 +190,7 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
         }
         res = await client.post(url, headers=headers, json=payload, timeout=25.0)
         if res.status_code != 200:
-            raise RuntimeError(f"{model_id} (HTTP {res.status_code})")
+            raise RuntimeError(f"{model_id}({res.status_code})")
         
         data = res.json()
         text_out = data["choices"][0]["message"]["content"]
@@ -142,18 +198,38 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
         return text_out, total_tokens
 
     async with httpx.AsyncClient() as client:
+        # Google 및 Groq 서버에서 현재 활성화된 실제 모델 목록을 병렬 조회
+        gemini_avail, groq_avail = await asyncio.gather(
+            get_gemini_models(client, gemini_key),
+            get_groq_models(client, groq_key)
+        )
+
+        # 각 선택 항목에 맞는 최적의 실제 모델 후보군 자동 배정
+        routing_map = {
+            "Gemini-2.5-Flash": (
+                "gemini",
+                pick_candidates(gemini_avail, ["2.5-flash", "flash-latest", "2.0-flash", "flash"])
+            ),
+            "Groq-Llama-3.1-8B": (
+                "groq",
+                pick_candidates(groq_avail, ["8b", "instant", "small", "gemma", "qwen", "llama"])
+            ),
+            "Groq-Llama-3.3-70B": (
+                "groq",
+                pick_candidates(groq_avail, ["70b", "versatile", "maverick", "scout", "llama-4", "llama-3.3", "llama"])
+            ),
+        }
+
         async def process_single_model(model_name: str, prompt: str):
-            route = MODEL_ROUTING.get(model_name, {
-                "provider": "gemini",
-                "candidates": ["gemini-2.5-flash"]
-            })
-            provider = route["provider"]
+            provider, candidates = routing_map.get(
+                model_name, ("gemini", gemini_avail[:3])
+            )
             start_time = time.perf_counter()
             ai_response = None
             real_tokens = 0
             errors = []
 
-            for target_id in route["candidates"]:
+            for target_id in candidates:
                 try:
                     if provider == "groq":
                         ai_response, real_tokens = await call_groq(client, target_id, prompt)
