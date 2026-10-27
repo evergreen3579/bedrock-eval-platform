@@ -62,7 +62,7 @@ async def get_gemini_models(client: httpx.AsyncClient, api_key: str) -> List[str
             for m in data.get("models", []):
                 methods = m.get("supportedGenerationMethods", [])
                 name = m.get("name", "").replace("models/", "")
-                # 무료 티어에서 100% 작동하는 flash 계열 텍스트 모델만 수집
+                # 무료 티어에서 안정적으로 작동하는 flash 계열 순수 텍스트 모델만 필터링
                 if (
                     "generateContent" in methods
                     and "gemini" in name
@@ -75,7 +75,7 @@ async def get_gemini_models(client: httpx.AsyncClient, api_key: str) -> List[str
                 return valid
     except Exception:
         pass
-    return ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"]
+    return ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-latest"]
 
 async def get_groq_models(client: httpx.AsyncClient, api_key: str) -> List[str]:
     global CACHED_GROQ_MODELS
@@ -91,7 +91,7 @@ async def get_groq_models(client: httpx.AsyncClient, api_key: str) -> List[str]:
             valid = []
             for m in data.get("data", []):
                 mid = m.get("id", "")
-                # 음성(whisper), 보안가드(guard), 비전(vision), 추론전용(deepseek) 등을 제외한 순수 채팅 LLM 필터링
+                # 음성, 가드, 비전, 임베딩 등 특수 목적 모델을 제외한 순수 채팅 LLM 필터링
                 if not any(x in mid.lower() for x in ["whisper", "guard", "vision", "tts", "playai", "embed", "allam"]):
                     valid.append(mid)
             if valid:
@@ -149,18 +149,31 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
             raise ValueError("GEMINI_API_KEY 미설정")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
         headers = {"Content-Type": "application/json", "x-goog-api-key": gemini_key}
+        
+        base_config = {
+            "temperature": 0.7,
+            "maxOutputTokens": 600,
+        }
+        # 2.5 모델의 경우 내부 추론(Thinking)으로 인한 시간 지연을 끄기 위해 budget 0 우선 적용
+        if "2.5" in model_id:
+            gen_config = {**base_config, "thinkingConfig": {"thinkingBudget": 0}}
+        else:
+            gen_config = base_config
+
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.7,
-                "maxOutputTokens": 500,
-                **({"thinkingConfig": {"thinkingBudget": 0}} if "2.5" in model_id else {})
-            }
+            "generationConfig": gen_config
         }
-        res = await client.post(url, headers=headers, json=payload, timeout=25.0)
+        
+        res = await client.post(url, headers=headers, json=payload, timeout=12.0)
+        
+        # 만약 특정 하위 모델이 thinkingConfig 파라미터를 거부(400)하면 즉시 기본 설정으로 재시도
+        if res.status_code == 400 and "thinkingConfig" in gen_config:
+            payload["generationConfig"] = base_config
+            res = await client.post(url, headers=headers, json=payload, timeout=12.0)
+
         if res.status_code != 200:
-            # URL 쿼리 파라미터 인증 폴백
-            res = await client.post(f"{url}?key={gemini_key}", json=payload, timeout=25.0)
+            res = await client.post(f"{url}?key={gemini_key}", json=payload, timeout=12.0)
         if res.status_code != 200:
             raise RuntimeError(f"{model_id}({res.status_code})")
         
@@ -187,9 +200,9 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.7,
-            "max_tokens": 700,
+            "max_tokens": 600,
         }
-        res = await client.post(url, headers=headers, json=payload, timeout=25.0)
+        res = await client.post(url, headers=headers, json=payload, timeout=15.0)
         if res.status_code != 200:
             raise RuntimeError(f"{model_id}({res.status_code})")
         
@@ -205,7 +218,7 @@ async def evaluate_models(request: Request, request_data: schemas.MultiLLMEvalRe
             get_groq_models(client, groq_key)
         )
 
-        # 각 선택 항목에 맞는 최적의 실제 모델 후보군 자동 배정
+        # 추론 대기 지연이 없는 초고속 모델을 1순위로 배치
         routing_map = {
             "Gemini-2.5-Flash": (
                 "gemini",
