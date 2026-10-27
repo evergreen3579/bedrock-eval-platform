@@ -3,6 +3,7 @@ npm run dev
 npm run build
 uvicorn main:app --reload
 pip freeze > requirements.txt
+pip install -r requirements.txt
 
 cd C:\tools\evergreen\aws
 ssh -i "bedrock-key.pem" ubuntu@54.227.82.12
