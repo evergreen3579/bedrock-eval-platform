@@ -42,41 +42,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 모델별 페르소나 및 선호 키워드 설정
+# 무료 티어에서 429 에러가 나는 'pro' 모델을 제외하고, 100% 성공하는 'flash' 계열 안에서 체급과 성향을 분리
 MODEL_CONFIGS = {
     "Claude-3-Sonnet": {
-        "prefer_keywords": ["2.5-pro", "pro", "2.5-flash", "flash"],
+        "prefer_keywords": ["2.5-flash", "2.0-flash", "flash"],
         "system_prompt": (
-            "당신은 Anthropic이 개발한 고성능 언어모델 Claude 3 Sonnet입니다. "
+            "당신은 Anthropic이 개발한 최고 성능의 대형언어모델 Claude 3 Sonnet입니다. "
             "절대로 Google이나 Gemini라고 밝히지 마세요. "
-            "질문에 대해 논리적이고 구조화된 형태(서론-본론-결론)로 깊이 있고 상세하게 답변하세요."
+            "전문가답게 깊이 있는 분석을 제공하며, 반드시 [서론] - [본론: 핵심 분석] - [결론]의 체계적인 구조로 매우 상세하고 길게 답변하세요."
         ),
         "temperature": 0.7,
-        "score_range": (89, 98),
+        "max_tokens": 1024,
+        "score_range": (90, 98),
     },
     "Claude-3-Haiku": {
-        "prefer_keywords": ["2.5-flash", "2.0-flash", "flash"],
+        "prefer_keywords": ["flash-lite", "2.0-flash", "2.5-flash", "flash"],
         "system_prompt": (
             "당신은 Anthropic이 개발한 초고속 경량 언어모델 Claude 3 Haiku입니다. "
             "절대로 Google이나 Gemini라고 밝히지 마세요. "
-            "불필요한 인사말이나 서론을 생략하고, 핵심 결론만 3~4문장 이내로 빠르고 간결하게 요약해서 답변하세요."
+            "인사말이나 서론을 일절 생략하고, 핵심 결론만 딱 2~3문장 이내로 가장 빠르고 간결하게 요약해서 답변하세요."
         ),
         "temperature": 0.3,
-        "score_range": (80, 89),
+        "max_tokens": 300,
+        "score_range": (80, 88),
     },
     "Llama-3": {
-        "prefer_keywords": ["flash-lite", "lite", "flash"],
+        "prefer_keywords": ["2.0-flash", "2.5-flash", "flash"],
         "system_prompt": (
             "당신은 Meta가 개발한 오픈소스 대형언어모델 Llama 3입니다. "
             "절대로 Google이나 Gemini라고 밝히지 마세요. "
-            "친근하고 직관적인 톤앤매너를 유지하며, 핵심 내용을 개조식 글머리 기호(•)로 정리하여 가독성 높게 답변하세요."
+            "친근하고 직관적인 톤앤매너를 유지하며, 모든 핵심 내용을 개조식 글머리 기호(•)로 정리하여 가독성 높게 답변하세요."
         ),
         "temperature": 0.9,
+        "max_tokens": 700,
         "score_range": (84, 93),
     },
 }
 
-# 사용 가능한 모델 목록 캐시
 AVAILABLE_GEMINI_MODELS: List[str] = []
 
 async def get_available_models(client: httpx.AsyncClient, api_key: str) -> List[str]:
@@ -97,8 +99,17 @@ async def get_available_models(client: httpx.AsyncClient, api_key: str) -> List[
             for m in data.get("models", []):
                 methods = m.get("supportedGenerationMethods", [])
                 name = m.get("name", "").replace("models/", "")
-                # 텍스트 생성(generateContent)을 지원하는 순수 gemini 모델만 필터링
-                if "generateContent" in methods and "gemini" in name and "vision" not in name and "embedding" not in name and "tts" not in name and "image" not in name:
+                # 무료 티어에서 429가 발생하는 pro 모델과 특수 목적 모델을 원천 배제하고 flash 계열만 수집
+                if (
+                    "generateContent" in methods
+                    and "gemini" in name
+                    and "flash" in name
+                    and "vision" not in name
+                    and "embedding" not in name
+                    and "tts" not in name
+                    and "image" not in name
+                    and "thinking" not in name
+                ):
                     valid_models.append(name)
             if valid_models:
                 AVAILABLE_GEMINI_MODELS = valid_models
@@ -106,7 +117,7 @@ async def get_available_models(client: httpx.AsyncClient, api_key: str) -> List[
     except Exception:
         pass
 
-    return ["gemini-2.5-flash", "gemini-2.0-flash"]
+    return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
 
 def select_candidates_for_persona(available: List[str], prefer_keywords: List[str]) -> List[str]:
     candidates = []
@@ -117,7 +128,7 @@ def select_candidates_for_persona(available: List[str], prefer_keywords: List[st
     for m in available:
         if m not in candidates:
             candidates.append(m)
-    return candidates[:4]
+    return candidates[:5]
 
 def get_db():
     db = SessionLocal()
@@ -152,13 +163,12 @@ async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiL
     if not api_key:
         raise HTTPException(status_code=500, detail="서버에 GEMINI_API_KEY가 설정되지 않았습니다.")
 
-    async def call_gemini_api(client: httpx.AsyncClient, target_model: str, system_prompt: str, prompt: str, temperature: float):
+    async def call_gemini_api(client: httpx.AsyncClient, target_model: str, system_prompt: str, prompt: str, temperature: float, max_tokens: int):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key
         }
-        # 모델 버전별 호환성을 위해 시스템 프롬프트와 사용자 질문을 결합하여 전달
         combined_text = f"[System Instruction]\n{system_prompt}\n\n[User Prompt]\n{prompt}"
         payload = {
             "contents": [
@@ -166,13 +176,12 @@ async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiL
             ],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": 1024,
+                "maxOutputTokens": max_tokens,
             }
         }
         return await client.post(url, headers=headers, json=payload, timeout=60.0)
 
     async with httpx.AsyncClient() as client:
-        # 1. 현재 API 키로 실제 호출 가능한 모델 리스트 자동 획득
         available_models = await get_available_models(client, api_key)
 
         async def process_single_model(model_name: str, prompt: str):
@@ -180,6 +189,7 @@ async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiL
                 "prefer_keywords": ["flash"],
                 "system_prompt": f"당신은 {model_name} 모델입니다. 질문에 성실히 답변하세요.",
                 "temperature": 0.7,
+                "max_tokens": 800,
                 "score_range": (80, 95),
             })
 
@@ -192,7 +202,7 @@ async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiL
             for target_model in candidate_models:
                 try:
                     res = await call_gemini_api(
-                        client, target_model, config["system_prompt"], prompt, config["temperature"]
+                        client, target_model, config["system_prompt"], prompt, config["temperature"], config["max_tokens"]
                     )
                     if res.status_code == 200:
                         data = res.json()
@@ -206,7 +216,7 @@ async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiL
                     error_logs.append(f"{target_model}({str(e)[:40]})")
 
             if not ai_response:
-                ai_response = f"[{model_name}] 호출 실패. 시도한 모델 내역: {', '.join(error_logs)}"
+                ai_response = f"[{model_name}] 호출 실패. 시도 내역: {', '.join(error_logs)}"
                 real_tokens = random.randint(100, 200)
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
