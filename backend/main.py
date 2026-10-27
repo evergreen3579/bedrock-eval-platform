@@ -10,10 +10,8 @@ import time
 import httpx
 from dotenv import load_dotenv
 
-# .env 파일에서 환경 변수(GEMINI_API_KEY 등) 로드
 load_dotenv()
 
-# [Phase 1 추가] Rate Limit 라이브러리 임포트
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -24,12 +22,10 @@ from database import SessionLocal, engine
 
 models.Base.metadata.create_all(bind=engine)
 
-# [Phase 1 추가] Nginx 프록시 환경을 고려하여 사용자의 실제 IP를 추출하도록 Limiter 설정
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="Amazon Bedrock 기반 다중 대형언어모델 평가 플랫폼")
 
-# [Phase 1 추가] 앱에 Limiter 인스턴스 주입 및 429 에러 핸들러 등록
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -46,11 +42,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 모델별 Gemini 체급 및 페르소나 매핑 설정
+# 모델별 후보군 리스트 (앞쪽 모델이 404/429일 경우 자동으로 다음 모델로 즉시 전환)
 MODEL_CONFIGS = {
     "Claude-3-Sonnet": {
-        "gemini_model": "gemini-2.5-pro",
-        "fallback_model": "gemini-2.5-flash",
+        "candidate_models": ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
         "system_prompt": (
             "당신은 Anthropic이 개발한 고성능 언어모델 Claude 3 Sonnet입니다. "
             "절대로 Google이나 Gemini라고 밝히지 마세요. "
@@ -60,8 +55,7 @@ MODEL_CONFIGS = {
         "score_range": (89, 98),
     },
     "Claude-3-Haiku": {
-        "gemini_model": "gemini-2.5-flash",
-        "fallback_model": "gemini-2.5-flash",
+        "candidate_models": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"],
         "system_prompt": (
             "당신은 Anthropic이 개발한 초고속 경량 언어모델 Claude 3 Haiku입니다. "
             "절대로 Google이나 Gemini라고 밝히지 마세요. "
@@ -71,8 +65,7 @@ MODEL_CONFIGS = {
         "score_range": (80, 89),
     },
     "Llama-3": {
-        "gemini_model": "gemini-2.5-flash-lite",
-        "fallback_model": "gemini-2.5-flash",
+        "candidate_models": ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"],
         "system_prompt": (
             "당신은 Meta가 개발한 오픈소스 대형언어모델 Llama 3입니다. "
             "절대로 Google이나 Gemini라고 밝히지 마세요. "
@@ -106,75 +99,71 @@ def test_db_connection(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DB 연결 실패: {str(e)}")
 
-# [Phase 1 추가] 라우터에 분당 5회 트래픽 제한 적용 (Request 객체 필수)
 @app.post("/mock-bedrock-eval/", response_model=List[schemas.LLMEvalResponse])
 @limiter.limit("5/minute")
 async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiLLMEvalRequest, db: Session = Depends(get_db)):
-    """
-    여러 모델의 평가 요청을 비동기로 동시에 처리하고 결과를 반환합니다.
-    """
-    # [Phase 1 추가] 서버 보호를 위한 백엔드 입력 글자 수 강제 검증 로직
     if len(request_data.prompt) > 1000:
         raise HTTPException(status_code=400, detail="프롬프트 길이는 최대 1000자를 초과할 수 없습니다.")
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=500, detail="서버에 GEMINI_API_KEY가 설정되지 않았습니다.")
 
     async def call_gemini_api(client: httpx.AsyncClient, target_model: str, system_prompt: str, prompt: str, temperature: float):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={api_key}"
+        # URL에 API 키를 노출하지 않고 x-goog-api-key 헤더로 안전하게 전송
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key
+        }
         payload = {
-            "system_instruction": {
+            "systemInstruction": {
                 "parts": [{"text": system_prompt}]
             },
             "contents": [
-                {"parts": [{"text": prompt}]}
+                {"role": "user", "parts": [{"text": prompt}]}
             ],
             "generationConfig": {
                 "temperature": temperature,
                 "maxOutputTokens": 1024,
             }
         }
-        return await client.post(url, json=payload, timeout=60.0)
+        return await client.post(url, headers=headers, json=payload, timeout=60.0)
 
     async def process_single_model(client: httpx.AsyncClient, model_name: str, prompt: str):
         config = MODEL_CONFIGS.get(model_name, {
-            "gemini_model": "gemini-2.5-flash",
-            "fallback_model": "gemini-2.5-flash",
+            "candidate_models": ["gemini-2.0-flash", "gemini-1.5-flash"],
             "system_prompt": f"당신은 {model_name} 모델입니다. 질문에 성실히 답변하세요.",
             "temperature": 0.7,
             "score_range": (80, 95),
         })
 
         start_time = time.perf_counter()
-        
-        try:
-            # 1차 호출 (지정된 체급 모델)
-            res = await call_gemini_api(
-                client, config["gemini_model"], config["system_prompt"], prompt, config["temperature"]
-            )
-            
-            # 무료 할당량 초과(429) 또는 모델 호환 오류 시 즉시 폴백 모델(flash)로 재시도
-            if res.status_code != 200 and config["gemini_model"] != config["fallback_model"]:
+        ai_response = None
+        real_tokens = 0
+        last_error = ""
+
+        # 후보 모델을 순서대로 시도하여 성공(200 OK)하면 즉시 채택
+        for target_model in config["candidate_models"]:
+            try:
                 res = await call_gemini_api(
-                    client, config["fallback_model"], config["system_prompt"], prompt, config["temperature"]
+                    client, target_model, config["system_prompt"], prompt, config["temperature"]
                 )
+                if res.status_code == 200:
+                    data = res.json()
+                    ai_response = data["candidates"][0]["content"]["parts"][0]["text"]
+                    usage = data.get("usageMetadata", {})
+                    real_tokens = usage.get("totalTokenCount") or max(50, int(len(ai_response) * 0.8))
+                    break
+                else:
+                    last_error = f"HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                last_error = str(e)
 
-            res.raise_for_status()
-            data = res.json()
+        if not ai_response:
+            ai_response = f"[{model_name}] API 호출 실패. API 키(AIzaSy... 시작 여부)를 확인해 주세요. ({last_error})"
+            real_tokens = random.randint(100, 200)
 
-            # 실제 응답 텍스트 추출
-            ai_response = data["candidates"][0]["content"]["parts"][0]["text"]
-            
-            # 실제 토큰 사용량 추출 (메타데이터가 없을 경우 글자 수 기반 추정)
-            usage = data.get("usageMetadata", {})
-            real_tokens = usage.get("totalTokenCount") or max(50, int(len(ai_response) * 0.8))
-
-        except Exception as e:
-            ai_response = f"[{model_name}] 일시적인 API 통신 지연이 발생했습니다. 잠시 후 다시 시도해 주세요. (상세: {str(e)})"
-            real_tokens = random.randint(100, 250)
-
-        # 실제 소요 시간(ms) 계산
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         eval_score = random.randint(*config["score_range"])
 
@@ -187,12 +176,10 @@ async def mock_bedrock_evaluation(request: Request, request_data: schemas.MultiL
             token_count=real_tokens
         )
 
-    # 단일 AsyncClient 세션 안에서 선택된 여러 모델을 비동기 병렬 실행
     async with httpx.AsyncClient() as client:
         tasks = [process_single_model(client, model, request_data.prompt) for model in request_data.models]
         results = await asyncio.gather(*tasks)
 
-    # 생성된 모든 결과를 DB에 순차 저장
     saved_records = []
     try:
         for record in results:
